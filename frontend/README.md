@@ -121,3 +121,19 @@ docker compose down -v
 To update the tests, navigate to the tests directory and modify the existing test files or add new ones as needed.
 
 For more information on writing and running Playwright tests, refer to the official [Playwright documentation](https://playwright.dev/docs/intro).
+
+## Insights page
+
+`/insights` shows how many of your items are in each status, from `GET /api/v1/items/stats`. The status helpers it
+uses live in `src/lib/items.ts`.
+
+## Unit tests
+
+Pure logic (helpers in `src/lib`) is tested with Vitest:
+
+```bash
+bun run test:unit        # run the unit tests
+bun run test:coverage    # with coverage (coverage/coverage-final.json)
+```
+
+The end-to-end tests still run with Playwright (`bun run test`).

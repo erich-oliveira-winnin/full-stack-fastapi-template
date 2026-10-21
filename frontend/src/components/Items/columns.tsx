@@ -1,11 +1,12 @@
 import type { ColumnDef } from "@tanstack/react-table"
 import { Check, Copy } from "lucide-react"
 
-import type { ItemPublic, ItemStatus } from "@/client"
+import type { ItemPublic } from "@/client"
 import type { DataTableFeatures } from "@/components/Common/DataTable"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { useCopyToClipboard } from "@/hooks/useCopyToClipboard"
+import { statusLabel } from "@/lib/items"
 import { cn } from "@/lib/utils"
 import { ItemActionsMenu } from "./ItemActionsMenu"
 
@@ -33,12 +34,6 @@ function CopyId({ id }: { id: string }) {
   )
 }
 
-const STATUS_LABELS: Record<ItemStatus, string> = {
-  todo: "To do",
-  in_progress: "In progress",
-  done: "Done",
-}
-
 export const columns: ColumnDef<DataTableFeatures, ItemPublic>[] = [
   {
     accessorKey: "id",
@@ -57,7 +52,7 @@ export const columns: ColumnDef<DataTableFeatures, ItemPublic>[] = [
     header: "Status",
     cell: ({ row }) => (
       <Badge variant={row.original.status === "done" ? "default" : "secondary"}>
-        {STATUS_LABELS[row.original.status ?? "todo"]}
+        {statusLabel(row.original.status)}
       </Badge>
     ),
   },

@@ -2,15 +2,15 @@ import { useSuspenseQuery } from "@tanstack/react-query"
 import { createFileRoute } from "@tanstack/react-router"
 import { Suspense } from "react"
 
-import { type ItemStatus, ItemsService } from "@/client"
+import { ItemsService } from "@/client"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
-
-const STATUSES: { status: ItemStatus; label: string }[] = [
-  { status: "todo", label: "To do" },
-  { status: "in_progress", label: "In progress" },
-  { status: "done", label: "Done" },
-]
+import {
+  completion,
+  STATUS_LABELS,
+  STATUSES,
+  totalsByStatus,
+} from "@/lib/items"
 
 export const Route = createFileRoute("/_layout/insights")({
   component: Insights,
@@ -28,22 +28,27 @@ function StatusCards() {
     queryFn: async () => (await ItemsService.readItemsStats()).data,
     queryKey: ["items", "stats"],
   })
-  const totals = new Map(data.data.map((row) => [row.status, row.total]))
+  const totals = totalsByStatus(data.data)
 
   return (
-    <div className="grid gap-4 sm:grid-cols-3">
-      {STATUSES.map(({ status, label }) => (
-        <Card key={status}>
-          <CardHeader>
-            <CardTitle className="text-sm text-muted-foreground">
-              {label}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="text-3xl font-bold">
-            {totals.get(status) ?? 0}
-          </CardContent>
-        </Card>
-      ))}
+    <div className="flex flex-col gap-4">
+      <p className="text-sm text-muted-foreground">
+        {completion(totals)}% of your items are done
+      </p>
+      <div className="grid gap-4 sm:grid-cols-3">
+        {STATUSES.map((status) => (
+          <Card key={status}>
+            <CardHeader>
+              <CardTitle className="text-sm text-muted-foreground">
+                {STATUS_LABELS[status]}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="text-3xl font-bold">
+              {totals[status]}
+            </CardContent>
+          </Card>
+        ))}
+      </div>
     </div>
   )
 }
