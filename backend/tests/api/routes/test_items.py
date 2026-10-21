@@ -77,6 +77,28 @@ def test_read_items(
     assert response.status_code == 200
     content = response.json()
     assert len(content["data"]) >= 2
+    assert content["total"] >= 2
+
+
+def test_read_items_by_status(
+    client: TestClient, superuser_token_headers: dict[str, str], db: Session
+) -> None:
+    item = create_random_item(db)
+    response = client.put(
+        f"{settings.API_V1_STR}/items/{item.id}",
+        headers=superuser_token_headers,
+        json={"status": "done"},
+    )
+    assert response.status_code == 200
+    response = client.get(
+        f"{settings.API_V1_STR}/items/",
+        headers=superuser_token_headers,
+        params={"status": "done"},
+    )
+    assert response.status_code == 200
+    content = response.json()
+    assert str(item.id) in [i["id"] for i in content["data"]]
+    assert all(i["status"] == "done" for i in content["data"])
 
 
 def test_update_item(
