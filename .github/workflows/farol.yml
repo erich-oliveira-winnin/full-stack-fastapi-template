@@ -1,0 +1,294 @@
+# farol: how much review a pull request needs, for the backend (FastAPI) and the frontend (TanStack Router).
+# Shadow mode: it comments, it never blocks a merge.
+#
+#   backend-tests   pytest with coverage against PostgreSQL, ruff (with the S security rules) and pip-audit.
+#   frontend-tests  Vitest with coverage.
+#   farol           reads git and those reports (it never runs the PR's code), writes one HTML report per side,
+#                   uploads them as non-zipped artifacts (they open in the browser) and comments on the PR. After a
+#                   push it also reports the commits since the previous push.
+name: farol
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions: {}
+
+concurrency:
+  group: farol-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  backend-tests:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    services:
+      db:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: changethis
+          POSTGRES_DB: app
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres -d app" --health-interval 5s --health-retries 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync
+      - name: Migrations
+        run: uv run alembic upgrade head
+      # The app serves the built frontend: the tests only need the directory to exist.
+      - run: mkdir -p app/frontend && echo '<!doctype html>' > app/frontend/index.html
+      - name: Tests with coverage
+        run: |
+          mkdir -p ../reports/backend
+          uv run --with pytest-cov pytest --cov=app --cov-report=json:../reports/backend/coverage.json -q
+        env:
+          FASTAPI_ENV: development
+      - name: ruff (with the flake8-bandit S rules)
+        if: ${{ !cancelled() }}
+        run: mkdir -p ../reports/backend && uvx ruff check app --output-format json --extend-select S --extend-ignore S101 --exit-zero > ../reports/backend/ruff.json
+      - name: pip-audit
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: |
+          uv export --format requirements-txt --no-hashes -q > /tmp/requirements.txt
+          uvx pip-audit -r /tmp/requirements.txt --no-deps --disable-pip --format json -o ../reports/backend/pip-audit.json || true
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: farol-reports-backend-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: ignore
+
+  frontend-tests:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Vitest with coverage
+        working-directory: frontend
+        run: bunx vitest run --coverage --coverage.reporter=json --coverage.reportsDirectory=../reports/frontend
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: farol-reports-frontend-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: ignore
+
+  farol:
+    needs: [backend-tests, frontend-tests]
+    if: ${{ !cancelled() && github.event.pull_request.draft == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Reports of the test jobs
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: farol-reports-*-${{ github.run_id }}
+          path: reports
+          merge-multiple: true
+
+      # After a push, also the commits since the previous head of the pull request.
+      - name: Previous push
+        id: since
+        env:
+          ACTION: ${{ github.event.action }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          since=""
+          if [ "$ACTION" = "synchronize" ] && [ -n "$BEFORE" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then since="$BEFORE"; fi
+          echo "sha=$since" >> "$GITHUB_OUTPUT"
+
+      # ---- backend ----
+      - name: farol analyze (backend)
+        uses: winnin/farol/action@main
+        with:
+          command: analyze
+          cwd: backend
+          base: ${{ github.event.pull_request.base.sha }}
+          head: ${{ github.event.pull_request.head.sha }}
+          coverage: ${{ hashFiles('reports/backend/coverage.json') != '' && 'reports/backend/coverage.json' || '' }}
+          eslint: ${{ hashFiles('reports/backend/ruff.json') != '' && 'reports/backend/ruff.json' || '' }}
+          audit: ${{ hashFiles('reports/backend/pip-audit.json') != '' && 'reports/backend/pip-audit.json' || '' }}
+          out: farol-backend.json
+
+      - name: farol analyze (backend, since the last push)
+        if: steps.since.outputs.sha != ''
+        uses: winnin/farol/action@main
+        with:
+          command: analyze
+          cwd: backend
+          base: ${{ github.event.pull_request.base.sha }}
+          head: ${{ github.event.pull_request.head.sha }}
+          since: ${{ steps.since.outputs.sha }}
+          coverage: ${{ hashFiles('reports/backend/coverage.json') != '' && 'reports/backend/coverage.json' || '' }}
+          eslint: ${{ hashFiles('reports/backend/ruff.json') != '' && 'reports/backend/ruff.json' || '' }}
+          audit: ${{ hashFiles('reports/backend/pip-audit.json') != '' && 'reports/backend/pip-audit.json' || '' }}
+          out: farol-backend-since.json
+
+      - name: farol reviewers (backend)
+        uses: winnin/farol/action@main
+        continue-on-error: true
+        with:
+          command: reviewers
+          cwd: backend
+          in: farol-backend.json
+          reviewers-file: reviewers-backend.json
+
+      - name: farol html (backend)
+        uses: winnin/farol/action@main
+        with:
+          command: html
+          cwd: backend
+          in: farol-backend.json
+          html-out: farol-backend.html
+          reviewers-file: ${{ hashFiles('reviewers-backend.json') != '' && 'reviewers-backend.json' || '' }}
+
+      - name: farol html (backend, since the last push)
+        if: steps.since.outputs.sha != ''
+        uses: winnin/farol/action@main
+        with:
+          command: html
+          cwd: backend
+          in: farol-backend-since.json
+          html-out: farol-backend-since.html
+
+      # ---- frontend ----
+      - name: farol analyze (frontend)
+        uses: winnin/farol/action@main
+        with:
+          command: analyze
+          cwd: frontend
+          base: ${{ github.event.pull_request.base.sha }}
+          head: ${{ github.event.pull_request.head.sha }}
+          coverage: ${{ hashFiles('reports/frontend/coverage-final.json') != '' && 'reports/frontend/coverage-final.json' || '' }}
+          out: farol-frontend.json
+
+      - name: farol analyze (frontend, since the last push)
+        if: steps.since.outputs.sha != ''
+        uses: winnin/farol/action@main
+        with:
+          command: analyze
+          cwd: frontend
+          base: ${{ github.event.pull_request.base.sha }}
+          head: ${{ github.event.pull_request.head.sha }}
+          since: ${{ steps.since.outputs.sha }}
+          coverage: ${{ hashFiles('reports/frontend/coverage-final.json') != '' && 'reports/frontend/coverage-final.json' || '' }}
+          out: farol-frontend-since.json
+
+      - name: farol reviewers (frontend)
+        uses: winnin/farol/action@main
+        continue-on-error: true
+        with:
+          command: reviewers
+          cwd: frontend
+          in: farol-frontend.json
+          reviewers-file: reviewers-frontend.json
+
+      - name: farol html (frontend)
+        uses: winnin/farol/action@main
+        with:
+          command: html
+          cwd: frontend
+          in: farol-frontend.json
+          html-out: farol-frontend.html
+          reviewers-file: ${{ hashFiles('reviewers-frontend.json') != '' && 'reviewers-frontend.json' || '' }}
+
+      - name: farol html (frontend, since the last push)
+        if: steps.since.outputs.sha != ''
+        uses: winnin/farol/action@main
+        with:
+          command: html
+          cwd: frontend
+          in: farol-frontend-since.json
+          html-out: farol-frontend-since.html
+
+      # Single, non-zipped files: the links in the comments open the reports in the browser.
+      - uses: actions/upload-artifact@v7
+        id: upload-backend
+        with:
+          path: farol-backend.html
+          archive: false
+      - uses: actions/upload-artifact@v7
+        id: upload-backend-since
+        if: steps.since.outputs.sha != ''
+        with:
+          path: farol-backend-since.html
+          archive: false
+      - uses: actions/upload-artifact@v7
+        id: upload-frontend
+        with:
+          path: farol-frontend.html
+          archive: false
+      - uses: actions/upload-artifact@v7
+        id: upload-frontend-since
+        if: steps.since.outputs.sha != ''
+        with:
+          path: farol-frontend-since.html
+          archive: false
+
+      # One comment per side on every push.
+      - name: farol comment (backend)
+        uses: winnin/farol/action@main
+        with:
+          command: comment
+          cwd: backend
+          in: farol-backend.json
+          pr: ${{ github.event.pull_request.number }}
+          new-comment: 'true'
+          report-url: ${{ steps.upload-backend.outputs.artifact-url }}
+          since-in: ${{ steps.since.outputs.sha != '' && 'farol-backend-since.json' || '' }}
+          since-report-url: ${{ steps.upload-backend-since.outputs.artifact-url }}
+          reviewers-file: ${{ hashFiles('reviewers-backend.json') != '' && 'reviewers-backend.json' || '' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: farol comment (frontend)
+        uses: winnin/farol/action@main
+        with:
+          command: comment
+          cwd: frontend
+          in: farol-frontend.json
+          pr: ${{ github.event.pull_request.number }}
+          new-comment: 'true'
+          report-url: ${{ steps.upload-frontend.outputs.artifact-url }}
+          since-in: ${{ steps.since.outputs.sha != '' && 'farol-frontend-since.json' || '' }}
+          since-report-url: ${{ steps.upload-frontend-since.outputs.artifact-url }}
+          reviewers-file: ${{ hashFiles('reviewers-frontend.json') != '' && 'reviewers-frontend.json' || '' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

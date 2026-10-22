@@ -1,0 +1,1 @@
+{ "routes": { "adapter": "tanstack-router", "dir": "src/routes" } }
