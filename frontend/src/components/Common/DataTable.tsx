@@ -41,11 +41,14 @@ export type DataTableFeatures = typeof dataTableFeatures
 interface DataTableProps<TData extends RowData> {
   columns: ColumnDef<DataTableFeatures, TData>[]
   data: TData[]
+  /** Rows on the server, when `data` is one page of them. */
+  total?: number
 }
 
 export function DataTable<TData extends RowData>({
   columns,
   data,
+  total,
 }: DataTableProps<TData>) {
   const table = useTable({
     features: dataTableFeatures,
@@ -113,7 +116,9 @@ export function DataTable<TData extends RowData>({
                 data.length,
               )}{" "}
               of{" "}
-              <span className="font-medium text-foreground">{data.length}</span>{" "}
+              <span className="font-medium text-foreground">
+                {total ?? data.length}
+              </span>{" "}
               entries
             </div>
             <div className="flex items-center gap-x-2">

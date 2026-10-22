@@ -143,3 +143,8 @@ Once you are done, regenerate the templates used by the application:
 ```console
 $ bun run email:export
 ```
+
+## Item status
+
+Items have a status (`todo`, `in_progress`, `done`), a filter on the list endpoint and a stats endpoint. See
+[docs/item-status.md](docs/item-status.md) for the API changes and the migration.

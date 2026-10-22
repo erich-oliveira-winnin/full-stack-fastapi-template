@@ -82,6 +82,33 @@ export type ItemPublic = {
      * Created At
      */
     created_at?: string | null;
+    status?: ItemStatus;
+};
+
+/**
+ * ItemStatus
+ */
+export type ItemStatus = 'todo' | 'in_progress' | 'done';
+
+/**
+ * ItemStatusCount
+ */
+export type ItemStatusCount = {
+    status: ItemStatus;
+    /**
+     * Total
+     */
+    total: number;
+};
+
+/**
+ * ItemsStats
+ */
+export type ItemsStats = {
+    /**
+     * Data
+     */
+    data: Array<ItemStatusCount>;
 };
 
 /**
@@ -96,6 +123,7 @@ export type ItemUpdate = {
      * Description
      */
     description?: string | null;
+    status?: ItemStatus | null;
 };
 
 /**
@@ -107,9 +135,9 @@ export type ItemsPublic = {
      */
     data: Array<ItemPublic>;
     /**
-     * Count
+     * Total
      */
-    count: number;
+    total: number;
 };
 
 /**
@@ -784,6 +812,10 @@ export type itemsReadItemsData = {
          * Limit
          */
         limit?: number;
+        /**
+         * Status
+         */
+        status?: ItemStatus | null;
     };
     url: '/api/v1/items/';
 };
@@ -945,3 +977,19 @@ export type privateCreateUserResponses = {
 };
 
 export type privateCreateUserResponse = privateCreateUserResponses[keyof privateCreateUserResponses];
+
+export type itemsReadItemsStatsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/items/stats';
+};
+
+export type itemsReadItemsStatsResponses = {
+    /**
+     * Successful Response
+     */
+    200: ItemsStats;
+};
+
+export type itemsReadItemsStatsResponse = itemsReadItemsStatsResponses[keyof itemsReadItemsStatsResponses];

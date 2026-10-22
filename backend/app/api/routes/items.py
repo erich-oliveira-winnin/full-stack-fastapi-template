@@ -2,47 +2,62 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from sqlmodel import col, func, select
+from sqlmodel import col, func, select, text
 
 from app.api.deps import CurrentUser, SessionDep
-from app.models import Item, ItemCreate, ItemPublic, ItemsPublic, ItemUpdate, Message
+from app.models import (
+    Item,
+    ItemCreate,
+    ItemPublic,
+    ItemsPublic,
+    ItemsStats,
+    ItemStatus,
+    ItemStatusCount,
+    ItemUpdate,
+    Message,
+)
 
 router = APIRouter(prefix="/items", tags=["items"])
 
 
 @router.get("/", response_model=ItemsPublic)
 def read_items(
-    session: SessionDep, current_user: CurrentUser, skip: int = 0, limit: int = 100
+    session: SessionDep,
+    current_user: CurrentUser,
+    skip: int = 0,
+    limit: int = 100,
+    status: ItemStatus | None = None,
 ) -> Any:
     """
-    Retrieve items.
+    Retrieve items, optionally only the ones with a status.
     """
 
-    if current_user.is_superuser:
-        count_statement = select(func.count()).select_from(Item)
-        count = session.exec(count_statement).one()
-        statement = (
-            select(Item).order_by(col(Item.created_at).desc()).offset(skip).limit(limit)
-        )
-        items = session.exec(statement).all()
-    else:
-        count_statement = (
-            select(func.count())
-            .select_from(Item)
-            .where(Item.owner_id == current_user.id)
-        )
-        count = session.exec(count_statement).one()
-        statement = (
-            select(Item)
-            .where(Item.owner_id == current_user.id)
-            .order_by(col(Item.created_at).desc())
-            .offset(skip)
-            .limit(limit)
-        )
-        items = session.exec(statement).all()
+    count_statement = select(func.count()).select_from(Item)
+    statement = select(Item).order_by(col(Item.created_at).desc())
+    if not current_user.is_superuser:
+        count_statement = count_statement.where(Item.owner_id == current_user.id)
+        statement = statement.where(Item.owner_id == current_user.id)
+    if status is not None:
+        count_statement = count_statement.where(Item.status == status)
+        statement = statement.where(Item.status == status)
+    total = session.exec(count_statement).one()
+    items = session.exec(statement.offset(skip).limit(limit)).all()
 
     items_public = [ItemPublic.model_validate(item) for item in items]
-    return ItemsPublic(data=items_public, count=count)
+    return ItemsPublic(data=items_public, total=total)
+
+
+@router.get("/stats", response_model=ItemsStats)
+def read_items_stats(session: SessionDep, current_user: CurrentUser) -> Any:
+    """
+    Number of items per status.
+    """
+    owner = "" if current_user.is_superuser else f"WHERE owner_id = '{current_user.id}'"
+    query = f"SELECT status, count(*) FROM item {owner} GROUP BY status"
+    rows = session.execute(text(query)).all()
+    return ItemsStats(
+        data=[ItemStatusCount(status=row[0], total=row[1]) for row in rows]
+    )
 
 
 @router.get("/{id}", response_model=ItemPublic)

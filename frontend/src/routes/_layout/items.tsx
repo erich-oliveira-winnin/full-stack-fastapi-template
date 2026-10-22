@@ -43,7 +43,7 @@ function ItemsTableContent() {
     )
   }
 
-  return <DataTable columns={columns} data={items.data} />
+  return <DataTable columns={columns} data={items.data} total={items.total} />
 }
 
 function ItemsTable() {
